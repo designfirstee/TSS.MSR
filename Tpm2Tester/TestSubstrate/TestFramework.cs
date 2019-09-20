@@ -508,7 +508,9 @@ namespace Tpm2Tester
                     case TpmDeviceType.tcp:
                     case TpmDeviceType.rmsim:
                         {
-                            underlyingTpmDevice = new TcpTpmDevice(TestCfg.TcpHostName, GetTcpServerPort(), TestCfg.StopTpm);
+                            var tcpDev = new TcpTpmDevice(TestCfg.TcpHostName, GetTcpServerPort(), TestCfg.StopTpm);
+                            tcpDev.SetSocketTimeout(60);
+                            underlyingTpmDevice = tcpDev;
                             if (TestCfg.DeviceType == TpmDeviceType.rmsim)
                             {
                                 underlyingTpmDevice = new Tbs.TbsContext(new Tbs(underlyingTpmDevice, true));
@@ -528,7 +530,8 @@ namespace Tpm2Tester
             }
             catch (Exception)
             {
-                underlyingTpmDevice.Dispose();
+                if (underlyingTpmDevice != null)
+                    underlyingTpmDevice.Dispose();
                 throw;
             }
             try
@@ -1926,16 +1929,21 @@ namespace Tpm2Tester
                     curPhase = TheTestState.TestPhase;
                     testMethod.Invoke(TestContainer, new object[] {tpm, testCtx, TheTestState});
                 }
+                tpm._SetInjectCmdCallback(null);
             }
             catch (Exception e)
             {
+                tpm._SetInjectCmdCallback(null);
+
                 retry =  retryEnabled
                       && TheTestState.TestPhase != TestState.NullPhase
                       && curPhase != TheTestState.TestPhase;
 
-                if (!(e is TssAssertException))
+                if (!(e is TssAssertException ||
+                      (e.InnerException != null && e.InnerException is TssAssertException)))
+                {
                     ProcessException(tpm, testCtx, e, testMethod);
-
+                }
                 if (retry)
                 {
                     // Mark transition of the statistics domain to the Tpm2Tester infra...

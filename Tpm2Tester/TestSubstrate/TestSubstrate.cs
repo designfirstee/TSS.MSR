@@ -137,6 +137,56 @@ namespace Tpm2Tester
             }
         }
 
+        public void SimpleInterferenceCallback(Tpm2 tpm, TpmCc nextCmd)
+        {
+            tpm.GetRandom(16);
+        }
+
+        int retryCount = 0;
+
+        public void SimulateConcurrentInterference(Tpm2 tpm, Tpm2.InjectCmdCallback cb)
+        {
+            tpm._SetInjectCmdCallback(cb);
+            retryCount = 0;
+        }
+
+        public void SimulateConcurrentInterference(Tpm2 tpm)
+        {
+            SimulateConcurrentInterference(tpm, SimpleInterferenceCallback);
+        }
+
+        // returns true if the test should repeat the failed audited command sequence 
+        public bool RetryAfterConcurrentTpmCommandInterference(Tpm2 tpm)
+        {
+            bool simulated = tpm._GetInjectCmdCallback() != null;
+
+            tpm._SetInjectCmdCallback(null);
+
+            if (++retryCount > TestConfig.MaxRetriesUponInterference)
+            {
+                WriteErrorToLog("Either TPM audit logic is faulty or a concurrent process " + 
+                                "keeps interposing its TPM commands. Aborting the test...");
+                return false;
+            }
+
+            // If the the first intervention was simulated, no random pause is necessary
+            if (retryCount > (simulated ? 1 : 0))
+            {
+                int pause = 3000 + RandomInt(7000);
+                WriteErrorToLog("Possible interference by a concurrent process detected. " + 
+                                "Retrying the test after {0} ms...", pause, System.ConsoleColor.Cyan);
+                // Sleep for a while to decrease the probability of being intervened
+                // again by continued concurrent TPM activity
+                Thread.Sleep(pause);
+            }
+            return true;
+        }
+
+        public void AssertConcurrentTpmCommandInterferenceDetected(TestContext testCtx)
+        {
+            testCtx.Assert("Interposed.Cmds.Detection", retryCount > 0);
+        }
+
         // Production TPM 1.16 in normal (non-bleeding) mode
         public bool ProdTpm_116()
         {
@@ -1412,12 +1462,10 @@ namespace Tpm2Tester
                 nameAlg = Random(TpmCfg.HashAlgs);
 
             var inPub = new TpmPublic(nameAlg,
-                ObjectAttr.Restricted | ObjectAttr.Decrypt
-                    | ObjectAttr.UserWithAuth | ObjectAttr.AdminWithPolicy
+                ObjectAttr.Decrypt | ObjectAttr.UserWithAuth | ObjectAttr.AdminWithPolicy
                      | ObjectAttr.SensitiveDataOrigin,
                 null,
-                new RsaParms(new SymDefObject(TpmAlgId.Aes, 128, TpmAlgId.Cfb),
-                             null, 2048, 0),
+                new RsaParms(new SymDefObject(), new SchemeOaep(nameAlg), 2048, 0),
                 new Tpm2bPublicKeyRsa());
 
             TpmPublic pub;
